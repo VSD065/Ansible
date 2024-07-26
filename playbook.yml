@@ -10,6 +10,11 @@
       apt:
         name: ca-certificates
         state: latest
+    - name: Ensure the CA certificates directory exists
+      file:
+       path: /usr/local/share/ca-certificates/
+       state: directory
+       mode: '0755'
 
     - name: Copy custom CA certificates
       copy:
@@ -24,13 +29,24 @@
       command: update-ca-certificates
 
     - name: Check validity of custom CA certificates
-      command: openssl x509 -in /usr/local/share/ca-certificates/{{ item | basename }} -noout -dates
-      loop:
+      command: "openssl x509 -in /usr/local/share/ca-certificates/{{ item }} -noout -dates"
+      register: cert_dates
+      with_items:
         - CA1.crt
         - CA2.crt
         - CA3.crt
-      register: cert_check
-      failed_when: "'notAfter' in cert_check.stdout"
+      failed_when: false
+
+    - name: Copy custom CA key files
+      copy:
+        src: "{{ item }}"
+        dest: "/etc/ssl/private/{{ item | basename }}"
+        mode: '0600'  # Set secure permissions for private keys
+      loop:
+        - CA1.key
+        - CA2.key
+        - CA3.key
+
 
     - name: Install Python virtualenv package (Debian/Ubuntu)
       apt:
@@ -47,15 +63,34 @@
 
     - name: Copy wheel file to target
       copy:
-        src: "{{ wheel_file }}"
+        src: "files/Example-1.1.1-py3-none-any.whl"
         dest: "{{ deployment_path }}/"
+    
+    - name: Ensure the directory for the virtual environment exists
+      file:
+        path: /opt/example/venv
+        state: directory
+        mode: '0755'
+
+    - name: Ensure the wheel file has the correct permissions
+      file:
+        path: /opt/example/Example-1.1.1-py3-none-any.whl
+        state: file
+        mode: '0644'
+
+    - name: Ensure the virtual environment activation script is executable
+      file:
+        path: /opt/example/venv/bin/activate
+        state: file
+        mode: '0755'
 
     - name: Install application from wheel file
-      command: |
-        . {{ deployment_path }}/venv/bin/activate &&
-        pip install {{ deployment_path }}/{{ wheel_file }}
-      args:
-        chdir: "{{ deployment_path }}"
+      shell: |
+       bash -c 'source /opt/example/venv/bin/activate && pip install /opt/example/Example-1.1.1-py3-none-any.whl'
+      environment:
+        VIRTUAL_ENV: /opt/example/venv
+        PATH: /opt/example/venv/bin:{{ ansible_env.PATH }}
+
 
     - name: Create instance directory
       file:
@@ -64,16 +99,19 @@
 
     - name: Deploy configuration file
       template:
-        src: config.py
+        src: "files/config.py"
         dest: "{{ instance_path }}/config.py"
-      vars:
-        secret_key: "{{ secret_key }}"
-        db_path: "{{ db_path }}"
-        admin_groups: "{{ admin_groups }}"
+
+    - name: Deploy app file
+      template:
+        src: "files/app.py"
+        dest: "{{ deployment_path }}/app.py"
+
+
 
     - name: Deploy run.sh script
       template:
-        src: run.sh.j2
+        src: "files/run.sh"
         dest: "{{ deployment_path }}/run.sh"
         mode: '0755'
 
@@ -82,8 +120,20 @@
         src: example.service.j2
         dest: /etc/systemd/system/example.service
 
-    - name: Reload systemd and enable service
+    - name: Deploy systemd service file
+      template:
+        src: example.service.j2
+        dest: /etc/systemd/system/example.service
+      notify:
+        - Reload systemd
+
+    - name: Start and enable example service
       systemd:
         name: example.service
         state: started
         enabled: yes
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
