@@ -1,0 +1,89 @@
+---
+- name: Configure CA certificates and deploy Python application
+  hosts: managed_nodes
+  become: yes
+  vars_files:
+    - vars/main.yml
+
+  tasks:
+    - name: Install CA certificates package (Debian/Ubuntu)
+      apt:
+        name: ca-certificates
+        state: latest
+
+    - name: Copy custom CA certificates
+      copy:
+        src: "{{ item }}"
+        dest: "/usr/local/share/ca-certificates/{{ item | basename }}"
+      loop:
+        - CA1.crt
+        - CA2.crt
+        - CA3.crt
+
+    - name: Update CA trust store with custom certificates
+      command: update-ca-certificates
+
+    - name: Check validity of custom CA certificates
+      command: openssl x509 -in /usr/local/share/ca-certificates/{{ item | basename }} -noout -dates
+      loop:
+        - CA1.crt
+        - CA2.crt
+        - CA3.crt
+      register: cert_check
+      failed_when: "'notAfter' in cert_check.stdout"
+
+    - name: Install Python virtualenv package (Debian/Ubuntu)
+      apt:
+        name: python3-venv
+        state: latest
+
+    - name: Create deployment directory
+      file:
+        path: "{{ deployment_path }}"
+        state: directory
+
+    - name: Create Python virtual environment
+      command: python3 -m venv "{{ deployment_path }}/venv"
+
+    - name: Copy wheel file to target
+      copy:
+        src: "{{ wheel_file }}"
+        dest: "{{ deployment_path }}/"
+
+    - name: Install application from wheel file
+      command: |
+        . {{ deployment_path }}/venv/bin/activate &&
+        pip install {{ deployment_path }}/{{ wheel_file }}
+      args:
+        chdir: "{{ deployment_path }}"
+
+    - name: Create instance directory
+      file:
+        path: "{{ instance_path }}"
+        state: directory
+
+    - name: Deploy configuration file
+      template:
+        src: config.py
+        dest: "{{ instance_path }}/config.py"
+      vars:
+        secret_key: "{{ secret_key }}"
+        db_path: "{{ db_path }}"
+        admin_groups: "{{ admin_groups }}"
+
+    - name: Deploy run.sh script
+      template:
+        src: run.sh.j2
+        dest: "{{ deployment_path }}/run.sh"
+        mode: '0755'
+
+    - name: Create systemd service file
+      template:
+        src: example.service.j2
+        dest: /etc/systemd/system/example.service
+
+    - name: Reload systemd and enable service
+      systemd:
+        name: example.service
+        state: started
+        enabled: yes

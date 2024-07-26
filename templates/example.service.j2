@@ -1,0 +1,13 @@
+[Unit]
+Description=Example Python Flask Application
+After=network.target
+
+[Service]
+ExecStart={{ deployment_path }}/run.sh
+Environment="INSTANCE_PATH={{ instance_path }}"
+User=www-data
+Group=www-data
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

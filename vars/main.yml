@@ -1,0 +1,11 @@
+# vars/main.yml
+port: 5000
+deployment_path: /opt/example
+wheel_file: Example-1.1.2-py3-none-any.whl
+instance_path: /opt/example/instance
+secret_key: AVerySafeExampleKey123!
+db_path: postgresql://example_user:myVerySecretDatabasePassword@localhost:5432/example_db
+admin_groups:
+  - Read-only
+  - Read-write
+  - Super
