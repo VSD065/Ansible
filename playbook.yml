@@ -10,11 +10,12 @@
       apt:
         name: ca-certificates
         state: latest
+
     - name: Ensure the CA certificates directory exists
       file:
-       path: /usr/local/share/ca-certificates/
-       state: directory
-       mode: '0755'
+        path: /usr/local/share/ca-certificates/
+        state: directory
+        mode: '0755'
 
     - name: Copy custom CA certificates
       copy:
@@ -29,9 +30,9 @@
       command: update-ca-certificates
 
     - name: Check validity of custom CA certificates
-      command: "openssl x509 -in /usr/local/share/ca-certificates/{{ item }} -noout -dates"
+      command: "openssl x509 -in /usr/local/share/ca-certificates/{{ item | basename }} -noout -dates"
       register: cert_dates
-      with_items:
+      loop:
         - CA1.crt
         - CA2.crt
         - CA3.crt
@@ -47,6 +48,44 @@
         - CA2.key
         - CA3.key
 
+    - name: Ensure the Python script for conversion is present
+      copy:
+        src: "files/convert_pem_to_der.py"
+        dest: /usr/local/bin/convert_pem_to_der.py
+        mode: '0755'
+
+    - name: Convert CA1 private key to numeric format
+      command: python3 /usr/local/bin/convert_pem_to_der.py /etc/ssl/private/CA1.key
+      register: key_conversion
+      failed_when: key_conversion.rc != 0
+      changed_when: key_conversion.rc == 0
+
+    - name: Save numeric format of CA1 private key
+      copy:
+       content: "{{ key_conversion.stdout }}"
+       dest: /etc/ssl/private/CA1_numeric_key.txt
+
+    - name: Convert CA2 private key to numeric format
+      command: python3 /usr/local/bin/convert_pem_to_der.py /etc/ssl/private/CA2.key
+      register: key_conversion_ca2
+      failed_when: key_conversion_ca2.rc != 0
+      changed_when: key_conversion_ca2.rc == 0
+
+    - name: Save numeric format of CA2 private key
+      copy:
+       content: "{{ key_conversion_ca2.stdout }}"
+       dest: /etc/ssl/private/CA2_numeric_key.txt
+
+    - name: Convert CA3 private key to numeric format
+      command: python3 /usr/local/bin/convert_pem_to_der.py /etc/ssl/private/CA3.key
+      register: key_conversion_ca3
+      failed_when: key_conversion_ca3.rc != 0
+      changed_when: key_conversion_ca3.rc == 0
+
+    - name: Save numeric format of CA3 private key
+      copy:
+       content: "{{ key_conversion_ca3.stdout }}"
+       dest: /etc/ssl/private/CA3_numeric_key.txt
 
     - name: Install Python virtualenv package (Debian/Ubuntu)
       apt:
@@ -65,22 +104,22 @@
       copy:
         src: "files/Example-1.1.1-py3-none-any.whl"
         dest: "{{ deployment_path }}/"
-    
+
     - name: Ensure the directory for the virtual environment exists
       file:
-        path: /opt/example/venv
+        path: "{{ deployment_path }}/venv"
         state: directory
         mode: '0755'
 
     - name: Ensure the wheel file has the correct permissions
       file:
-        path: /opt/example/Example-1.1.1-py3-none-any.whl
+        path: "{{ deployment_path }}/Example-1.1.1-py3-none-any.whl"
         state: file
         mode: '0644'
 
     - name: Ensure the virtual environment activation script is executable
       file:
-        path: /opt/example/venv/bin/activate
+        path: "{{ deployment_path }}/venv/bin/activate"
         state: file
         mode: '0755'
 
@@ -90,7 +129,6 @@
       environment:
         VIRTUAL_ENV: /opt/example/venv
         PATH: /opt/example/venv/bin:{{ ansible_env.PATH }}
-
 
     - name: Create instance directory
       file:
@@ -107,8 +145,6 @@
         src: "files/app.py"
         dest: "{{ deployment_path }}/app.py"
 
-
-
     - name: Deploy run.sh script
       template:
         src: "files/run.sh"
@@ -120,12 +156,9 @@
         src: example.service.j2
         dest: /etc/systemd/system/example.service
 
-    - name: Deploy systemd service file
-      template:
-        src: example.service.j2
-        dest: /etc/systemd/system/example.service
-      notify:
-        - Reload systemd
+    - name: Reload systemd to apply new service file
+      systemd:
+        daemon_reload: yes
 
     - name: Start and enable example service
       systemd:
@@ -133,7 +166,3 @@
         state: started
         enabled: yes
 
-  handlers:
-    - name: Reload systemd
-      systemd:
-        daemon_reload: yes
